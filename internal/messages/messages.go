@@ -76,7 +76,7 @@ func Encode(m Message) (raw []byte, err error) {
 //
 // buf will be a slice referencing data in raw; do not modify raw until you are
 // finished with the message.
-func Validate(raw []byte) (buf []byte, ty Type, err error) {
+func Parse(raw []byte) (buf []byte, ty Type, err error) {
 	if len(raw) < 3 {
 		return nil, TypeInvalid, fmt.Errorf("payload too small for message")
 	}

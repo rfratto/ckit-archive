@@ -12,7 +12,7 @@ func TestMessages(t *testing.T) {
 	raw, err := Encode(&md)
 	require.NoError(t, err)
 
-	buf, ty, err := Validate(raw)
+	buf, ty, err := Parse(raw)
 	require.NoError(t, err)
 	require.Equal(t, TypeState, ty)
 
@@ -32,11 +32,11 @@ func TestMessages_Invalid(t *testing.T) {
 
 	// Force the type byte (2) to be invalid.
 	raw[2] = byte(TypeInvalid)
-	_, _, err = Validate(raw)
+	_, _, err = Parse(raw)
 	require.EqualError(t, err, "invalid message type 0")
 
 	raw[2] = byte(150)
-	_, _, err = Validate(raw)
+	_, _, err = Parse(raw)
 	require.EqualError(t, err, "invalid message type 150")
 
 	// Restore the type back and then mess up the magic number.
@@ -44,7 +44,7 @@ func TestMessages_Invalid(t *testing.T) {
 
 	raw[1] = 0xFF
 	raw[0] = 0xDD
-	_, _, err = Validate(raw)
+	_, _, err = Parse(raw)
 	require.EqualError(t, err, "invalid magic header ddff")
 }
 
