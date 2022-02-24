@@ -92,9 +92,11 @@ func (c *packetsClientConn) readOrBlock(b []byte) (n int, err error) {
 		if !ok {
 			return n, io.EOF
 		}
-		_, err = c.readBuffer.Write(msg.Message.Data)
-		if err != nil {
-			return n, err
+		if msg.Error == nil {
+			_, err = c.readBuffer.Write(msg.Message.Data)
+			if err != nil {
+				return n, err
+			}
 		}
 		return n, msg.Error
 	default:
