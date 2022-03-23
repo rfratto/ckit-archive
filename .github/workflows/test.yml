@@ -22,7 +22,10 @@ jobs:
       run: make lint
   test:
     name: Test
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [macos-latest, windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.platform }}
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
