@@ -34,11 +34,15 @@
 package gossiphttp
 
 import (
+	"bufio"
+	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/go-kit/log"
@@ -52,6 +56,13 @@ import (
 // memory. Packets buffers are an LRU cache, so the oldest non-dequeued packet
 // is discarded after a bufer is full.
 const packetBufferSize = 1000
+
+const (
+	contentTypeHeader = "Content-Type"
+	// ckitContentType is the value of the Content Type header that gossiphttp
+	// messages must use.
+	ckitContentType = "application/x.ckit"
+)
 
 // API endpoints used for messaging.
 var (
@@ -95,11 +106,23 @@ type Transport struct {
 	// background.
 	inPacketQueue, outPacketQueue *queue.Queue
 
+	inPacketCh chan *memberlist.Packet
+	streamCh   chan net.Conn
+
+	// Incoming packets and streams should be rejected when the transport is
+	// closed.
+	closedMut sync.RWMutex
+	exited    chan struct{}
+	cancel    context.CancelFunc
+
 	// Generated after calling FinalAdvertiseAddr
 	localAddr net.Addr
 }
 
-var _ memberlist.Transport = (*Transport)(nil)
+var (
+	_ memberlist.Transport          = (*Transport)(nil)
+	_ memberlist.NodeAwareTransport = (*Transport)(nil)
+)
 
 // NewTransport returns a new Transport. Transports must be attached to an HTTP
 // server so their endpoints are invoked. See [Handler] for more information.
@@ -113,6 +136,8 @@ func NewTransport(opts Options) (*Transport, prometheus.Collector, error) {
 		l = log.NewNopLogger()
 	}
 
+	ctx, cancel := context.WithCancel(context.Background())
+
 	t := &Transport{
 		log:     l,
 		opts:    opts,
@@ -120,6 +145,12 @@ func NewTransport(opts Options) (*Transport, prometheus.Collector, error) {
 
 		inPacketQueue:  queue.New(packetBufferSize),
 		outPacketQueue: queue.New(packetBufferSize),
+
+		inPacketCh: make(chan *memberlist.Packet),
+		streamCh:   make(chan net.Conn),
+
+		exited: make(chan struct{}),
+		cancel: cancel,
 	}
 
 	t.metrics.Add(prometheus.NewGaugeFunc(
@@ -139,8 +170,61 @@ func NewTransport(opts Options) (*Transport, prometheus.Collector, error) {
 
 	// TODO(rfratto): goroutine to read from the queue in background and send
 	// packets to peers.
+	// TODO(@tpaschalis): synchronize closes and gracefully shut everything
+	// down.
+	go t.run(ctx)
 
-	return &Transport{}, t.metrics, nil
+	return t, t.metrics, nil
+}
+
+func (t *Transport) run(ctx context.Context) {
+	defer close(t.exited)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	defer wg.Wait()
+
+	// Close our queues before shutting down. This must be done before calling
+	// wg.Wait as it will cause the goroutines to exit.
+	defer func() { _ = t.inPacketQueue.Close() }()
+	defer func() { _ = t.outPacketQueue.Close() }()
+
+	// Process queue of incoming packets
+	go func() {
+		defer wg.Done()
+
+		for {
+			v, err := t.inPacketQueue.Dequeue(context.Background())
+			if err != nil {
+				return
+			}
+
+			pkt := v.(*memberlist.Packet)
+			t.metrics.packetRxTotal.Inc()
+			t.metrics.packetRxBytesTotal.Add(float64(len(pkt.Buf)))
+
+			t.inPacketCh <- pkt
+		}
+	}()
+
+	// Process queue of outgoing packets
+	go func() {
+		defer wg.Done()
+
+		for {
+			v, err := t.outPacketQueue.Dequeue(context.Background())
+			if err != nil {
+				return
+			}
+
+			pkt := v.(*outPacket)
+			t.metrics.packetTxTotal.Inc()
+			t.metrics.packetTxBytesTotal.Add(float64(len(pkt.Data)))
+			t.writeToSync(pkt.Data, pkt.Addr)
+		}
+	}()
+
+	<-ctx.Done()
 }
 
 // Handler returns the base HTTP route and handler for the Transport.
@@ -152,6 +236,11 @@ func (t *Transport) Handler() (route string, handler http.Handler) {
 }
 
 func (t *Transport) handleMessage(w http.ResponseWriter, r *http.Request) {
+	if r.ProtoMajor != 2 {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
 	var (
 		recvTime   = time.Now()
 		remoteAddr = parseRemoteAddr(r.RemoteAddr)
@@ -171,9 +260,9 @@ func (t *Transport) handleMessage(w http.ResponseWriter, r *http.Request) {
 		t.metrics.packetRxTotal.Inc()
 		t.metrics.packetRxBytesTotal.Add(float64(len(msg)))
 
-		// Enqueue the packet to be processed in the background. This allows HTTP
-		// calls to have as low of a latency as possible to help keep things moving
-		// along.
+		// Enqueue the packet to be processed in the background. This allows
+		// HTTP calls to have as low of a latency as possible to help keep
+		// things moving along.
 		t.inPacketQueue.Enqueue(&memberlist.Packet{
 			Buf:       msg,
 			From:      remoteAddr,
@@ -189,16 +278,19 @@ func (t *Transport) handleMessage(w http.ResponseWriter, r *http.Request) {
 func parseRemoteAddr(addr string) net.Addr {
 	remoteHost, remoteService, err := net.SplitHostPort(addr)
 	if err != nil {
+		fmt.Println("!! returning unknown 1")
 		return unknownAddr{}
 	}
 
 	remoteIP := net.ParseIP(remoteHost)
 	if remoteIP == nil {
+		fmt.Println("!! returning unknown 2")
 		return unknownAddr{}
 	}
 
 	remotePort, err := net.LookupPort("tcp", remoteService)
 	if err != nil {
+		fmt.Println("!! returning unknown 3")
 		return unknownAddr{}
 	}
 
@@ -208,8 +300,117 @@ func parseRemoteAddr(addr string) net.Addr {
 	}
 }
 
+var _ io.WriteCloser = (*flushWriter)(nil)
+
+type flushWriter struct {
+	w io.Writer
+	f http.Flusher
+}
+
+func (w *flushWriter) Write(data []byte) (int, error) {
+	n, err := w.w.Write(data)
+	w.f.Flush()
+	return n, err
+}
+
+func (w *flushWriter) Close() error { return nil }
+
 func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
-	// TODO(rfratto): something
+	if r.ProtoMajor != 2 {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		w.WriteHeader(http.StatusHTTPVersionNotSupported)
+		return
+	}
+
+	if r.Header.Get(contentTypeHeader) != ckitContentType {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	flusher.Flush()
+
+	waitClosed := make(chan struct{})
+
+	var readMut sync.Mutex
+	readCnd := sync.NewCond(&readMut)
+
+	t.metrics.openStreams.Inc()
+
+	packetsClient := &http2Stream{
+		t: t,
+		r: r.Body,
+		w: &flushWriter{w: w, f: flusher},
+	}
+
+	conn := &packetsClientConn{
+		cli: packetsClient,
+		onClose: func() {
+			t.metrics.openStreams.Dec()
+			close(waitClosed)
+		},
+		closed:  make(chan struct{}),
+		metrics: t.metrics,
+
+		localAddr:  t.localAddr,
+		remoteAddr: parseRemoteAddr(r.RemoteAddr),
+
+		readCnd:      readCnd,
+		readMessages: make(chan readResult),
+	}
+
+	t.streamCh <- conn
+	<-waitClosed
+}
+
+type http2Stream struct {
+	t *Transport
+	r io.ReadCloser
+	w io.Writer
+}
+
+// Send sends b over an http2Stream connection.
+func (sc *http2Stream) Send(b []byte) error {
+	_, err := sc.w.Write(b)
+	return err
+}
+
+// Recv reads from an http2Stream connection.
+func (sc *http2Stream) Recv() ([]byte, error) {
+	// TODO(@tpaschalis) Can't we just read directly into the buffer?
+	bufReader := bufio.NewReader(sc.r)
+	buf := make([]byte, 1024)
+
+	var err error
+	for {
+		n, err := bufReader.Read(buf)
+		if n > 0 {
+			return buf, nil
+		}
+
+		if err != nil {
+			if err == io.EOF {
+				sc.r.Close()
+			}
+			break
+		}
+	}
+
+	return nil, err
+}
+
+// WriteToAddress implements NodeAwareTransport.
+func (t *Transport) WriteToAddress(b []byte, addr memberlist.Address) (time.Time, error) {
+	return t.WriteTo(b, addr.Addr)
+}
+
+// DialAddressTimeout implements NodeAwareTransport.
+func (t *Transport) DialAddressTimeout(addr memberlist.Address, timeout time.Duration) (net.Conn, error) {
+	return t.DialTimeout(addr.Addr, timeout)
 }
 
 // FinalAdvertiseAddr returns the address this peer uses to advertise its
@@ -235,30 +436,110 @@ func (t *Transport) FinalAdvertiseAddr(ip string, port int) (net.IP, int, error)
 	return advertiseIP, port, nil
 }
 
+type outPacket struct {
+	Data []byte
+	Addr string
+}
+
 // WriteTo enqueues a message b to be sent to the peer specified by addr. The
 // message is delivered in the background asynchronously by the transport.
 func (t *Transport) WriteTo(b []byte, addr string) (time.Time, error) {
-	panic("NYI")
+	t.outPacketQueue.Enqueue(&outPacket{Data: b, Addr: addr})
+	return time.Now(), nil
 }
 
 // PacketCh returns a channel of packets received from remote peers.
 func (t *Transport) PacketCh() <-chan *memberlist.Packet {
-	panic("NYI")
+	return t.inPacketCh
 }
 
 // DialTimeout opens a bidirectional communication channel to the specified
 // peer address.
 func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, error) {
-	panic("NYI")
+	ctx := context.Background()
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, t.opts.PacketTimeout)
+		defer cancel()
+	}
+
+	var readMut sync.Mutex
+	readCnd := sync.NewCond(&readMut)
+
+	t.metrics.openStreams.Inc()
+
+	pr, pw := io.Pipe()
+
+	req, err := http.NewRequest(http.MethodPost, "http://"+addr+streamEndpoint, pr)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set(contentTypeHeader, ckitContentType)
+
+	resp, err := t.opts.Client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+
+	packetsClient := &http2Stream{
+		t: t,
+		r: resp.Body,
+		w: pw,
+	}
+
+	return &packetsClientConn{
+		cli: packetsClient,
+
+		onClose: func() {
+			t.metrics.openStreams.Dec()
+		},
+		closed:  make(chan struct{}),
+		metrics: t.metrics,
+
+		localAddr:  t.localAddr,
+		remoteAddr: parseRemoteAddr(addr),
+
+		readCnd:      readCnd,
+		readMessages: make(chan readResult),
+	}, nil
 }
 
 // StreamCh returns a channel of bidirectional communication channels opened by
 // remote peers.
 func (t *Transport) StreamCh() <-chan net.Conn {
-	panic("NYI")
+	return t.streamCh
 }
 
 // Shutdown terminates the transport.
 func (t *Transport) Shutdown() error {
-	panic("NYI")
+	t.closedMut.Lock()
+	defer t.closedMut.Unlock()
+	t.cancel()
+	<-t.exited
+	return nil
+}
+
+func (t *Transport) writeToSync(b []byte, addr string) {
+	ctx := context.Background()
+	if t.opts.PacketTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, t.opts.PacketTimeout)
+		defer cancel()
+	}
+
+	bb := bytes.NewBuffer(nil)
+	writeMessage(bb, b)
+	req, err := http.NewRequest("POST", "http://"+addr+messageEndpoint, bb)
+	if err != nil {
+		level.Debug(t.log).Log("msg", "failed to create outgoing request", "err", err)
+		t.metrics.packetTxFailedTotal.Inc()
+		return
+	}
+
+	req.Header.Set("Content-Type", ckitContentType)
+	_, err = t.opts.Client.Do(req)
+	if err != nil {
+		level.Debug(t.log).Log("msg", "failed to send message", "err", err)
+		t.metrics.packetTxFailedTotal.Inc()
+	}
 }
