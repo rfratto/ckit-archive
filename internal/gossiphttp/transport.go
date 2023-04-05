@@ -42,6 +42,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -278,19 +279,16 @@ func (t *Transport) handleMessage(w http.ResponseWriter, r *http.Request) {
 func parseRemoteAddr(addr string) net.Addr {
 	remoteHost, remoteService, err := net.SplitHostPort(addr)
 	if err != nil {
-		fmt.Println("!! returning unknown 1")
 		return unknownAddr{}
 	}
 
 	remoteIP := net.ParseIP(remoteHost)
 	if remoteIP == nil {
-		fmt.Println("!! returning unknown 2")
 		return unknownAddr{}
 	}
 
 	remotePort, err := net.LookupPort("tcp", remoteService)
 	if err != nil {
-		fmt.Println("!! returning unknown 3")
 		return unknownAddr{}
 	}
 
@@ -470,9 +468,18 @@ func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 
 	pr, pw := io.Pipe()
 
-	req, err := http.NewRequest(http.MethodPost, "http://"+addr+streamEndpoint, pr)
-	if err != nil {
-		return nil, err
+	req := &http.Request{
+		Method: http.MethodPost,
+		URL: &url.URL{
+			Scheme: "http",
+			Host:   addr,
+			Path:   streamEndpoint,
+		},
+		Header:     http.Header{},
+		Proto:      "HTTP/2",
+		ProtoMajor: 2,
+		ProtoMinor: 0,
+		Body:       pr,
 	}
 	req.Header.Set(contentTypeHeader, ckitContentType)
 

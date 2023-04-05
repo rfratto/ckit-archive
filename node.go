@@ -3,10 +3,13 @@ package ckit
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
 	"net"
+	"net/http"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -17,12 +20,14 @@ import (
 	"github.com/hashicorp/memberlist"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/rfratto/ckit/clientpool"
+	"github.com/rfratto/ckit/internal/gossiphttp"
 	"github.com/rfratto/ckit/internal/lamport"
 	"github.com/rfratto/ckit/internal/memberlistgrpc"
 	"github.com/rfratto/ckit/internal/messages"
 	"github.com/rfratto/ckit/internal/queue"
 	"github.com/rfratto/ckit/peer"
 	"github.com/rfratto/ckit/shard"
+	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 )
 
@@ -164,6 +169,100 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 	mlc.AdvertiseAddr = advertiseIP.String()
 	mlc.AdvertisePort = advertisePort
 	mlc.LogOutput = io.Discard
+
+	n := &Node{
+		log: cfg.Log,
+		cfg: cfg,
+		m:   newMetrics(),
+
+		conflictQueue:        queue.New(1),
+		notifyObserversQueue: queue.New(1),
+
+		peerStates: make(map[string]messages.State),
+		peers:      make(map[string]peer.Peer),
+	}
+
+	nd := &nodeDelegate{Node: n}
+	mlc.Events = nd
+	mlc.Delegate = nd
+	mlc.Conflict = nd
+
+	ml, err := memberlist.Create(mlc)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create memberlist: %w", err)
+	}
+
+	n.ml = ml
+	n.broadcasts.NumNodes = func() int { return len(n.Peers()) }
+	n.broadcasts.RetransmitMult = mlc.RetransmitMult
+
+	// Include some extra metrics.
+	n.m.Add(
+		newMemberlistCollector(ml),
+		transportMetrics,
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "cluster_node_lamport_time",
+			Help: "The current lamport time of the node.",
+		}, func() float64 {
+			return float64(n.clock.Now())
+		}),
+	)
+
+	return n, nil
+}
+
+// NewHTTPNode creates an unstarted Node to participulate in a cluster. An error
+// will be returned if the provided config is invalid.
+func NewHTTPNode(mux *http.ServeMux, cfg Config) (*Node, error) {
+	if err := cfg.validate(); err != nil {
+		return nil, err
+	}
+
+	advertiseAddr, advertisePortString, err := net.SplitHostPort(cfg.AdvertiseAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read advertise address: %w", err)
+	}
+
+	advertiseIP, err := net.ResolveIPAddr("ip4", advertiseAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to lookup advertise address %s: %w", advertiseAddr, err)
+	}
+
+	advertisePort, err := net.LookupPort("tcp", advertisePortString)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse advertise port %s: %w", advertisePortString, err)
+	}
+
+	cli := &http.Client{
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, _ *tls.Config) (net.Conn, error) {
+				return net.Dial(network, addr)
+			},
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+
+	httpTransport, transportMetrics, err := gossiphttp.NewTransport(gossiphttp.Options{
+		Log:           cfg.Log,
+		Client:        cli,
+		PacketTimeout: 1 * time.Second,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to build transport: %w", err)
+	}
+
+	baseRoute, handler := httpTransport.Handler()
+	mux.Handle(baseRoute, handler)
+
+	mlc := memberlist.DefaultLANConfig()
+	mlc.Name = cfg.Name
+	mlc.Transport = httpTransport
+	mlc.AdvertiseAddr = advertiseIP.String()
+	mlc.AdvertisePort = advertisePort
+	mlc.LogOutput = os.Stderr
 
 	n := &Node{
 		log: cfg.Log,
