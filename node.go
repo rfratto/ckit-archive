@@ -225,7 +225,7 @@ func NewHTTPNode(mux *http.ServeMux, cfg Config) (*Node, error) {
 
 	advertiseIP, err := net.ResolveIPAddr("ip4", advertiseAddr)
 	if err != nil {
-		return nil, fmt.Errorf("failed to lookup advertise address %s: %w", advertiseAddr, err)
+		return nil, fmt.Errorf("failed to lookup advertise address %q: %w", advertiseAddr, err)
 	}
 
 	advertisePort, err := net.LookupPort("tcp", advertisePortString)
