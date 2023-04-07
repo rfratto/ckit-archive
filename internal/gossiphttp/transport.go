@@ -369,10 +369,7 @@ func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	conn := &packetsClientConn{
 		cli: packetsClient,
-		onClose: func() {
-			t.metrics.openStreams.Dec()
-			close(waitClosed)
-		},
+		onClose: func() { close(waitClosed) },
 		closed:  make(chan struct{}),
 		metrics: t.metrics,
 
