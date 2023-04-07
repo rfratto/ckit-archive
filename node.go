@@ -230,7 +230,7 @@ func NewHTTPNode(mux *http.ServeMux, cfg Config) (*Node, error) {
 
 	advertisePort, err := net.LookupPort("tcp", advertisePortString)
 	if err != nil {
-		return nil, fmt.Errorf("failed to parse advertise port %s: %w", advertisePortString, err)
+		return nil, fmt.Errorf("failed to parse advertise port %q: %w", advertisePortString, err)
 	}
 
 	cli := &http.Client{
