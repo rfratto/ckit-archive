@@ -34,7 +34,6 @@
 package gossiphttp
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
@@ -125,6 +124,41 @@ var (
 	_ memberlist.NodeAwareTransport = (*Transport)(nil)
 )
 
+// http2Stream implements the streamClient interface and allows for sending and
+// receiving messages in a bidirectional streaming connection.
+type http2Stream struct {
+	t *Transport
+	r io.ReadCloser
+	w io.Writer
+}
+
+// Send sends b over an http2Stream connection.
+func (sc *http2Stream) Send(b []byte) error {
+	return writeMessage(sc.w, b)
+}
+
+// Recv reads from an http2Stream connection.
+func (sc *http2Stream) Recv() ([]byte, error) {
+	return readMessage(sc.r)
+}
+
+var _ io.WriteCloser = (*flushWriter)(nil)
+
+// flushWriter wraps an io.Writer with an http.Flusher to flush buffered data
+// to a streaming HTTP/2 connection's request body.
+type flushWriter struct {
+	w io.Writer
+	f http.Flusher
+}
+
+func (w *flushWriter) Write(data []byte) (int, error) {
+	n, err := w.w.Write(data)
+	w.f.Flush()
+	return n, err
+}
+
+func (w *flushWriter) Close() error { return nil }
+
 // NewTransport returns a new Transport. Transports must be attached to an HTTP
 // server so their endpoints are invoked. See [Handler] for more information.
 func NewTransport(opts Options) (*Transport, prometheus.Collector, error) {
@@ -169,10 +203,6 @@ func NewTransport(opts Options) (*Transport, prometheus.Collector, error) {
 		func() float64 { return float64(t.outPacketQueue.Size()) },
 	))
 
-	// TODO(rfratto): goroutine to read from the queue in background and send
-	// packets to peers.
-	// TODO(@tpaschalis): synchronize closes and gracefully shut everything
-	// down.
 	go t.run(ctx)
 
 	return t, t.metrics, nil
@@ -236,6 +266,7 @@ func (t *Transport) Handler() (route string, handler http.Handler) {
 	return baseRoute, mux
 }
 
+// handleMessage is used for single-packet communication.
 func (t *Transport) handleMessage(w http.ResponseWriter, r *http.Request) {
 	if r.ProtoMajor != 2 {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -298,21 +329,7 @@ func parseRemoteAddr(addr string) net.Addr {
 	}
 }
 
-var _ io.WriteCloser = (*flushWriter)(nil)
-
-type flushWriter struct {
-	w io.Writer
-	f http.Flusher
-}
-
-func (w *flushWriter) Write(data []byte) (int, error) {
-	n, err := w.w.Write(data)
-	w.f.Flush()
-	return n, err
-}
-
-func (w *flushWriter) Close() error { return nil }
-
+// handleStream is used for streaming bidirectional communication.
 func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
 	if r.ProtoMajor != 2 {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -363,42 +380,6 @@ func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	t.streamCh <- conn
 	<-waitClosed
-}
-
-type http2Stream struct {
-	t *Transport
-	r io.ReadCloser
-	w io.Writer
-}
-
-// Send sends b over an http2Stream connection.
-func (sc *http2Stream) Send(b []byte) error {
-	_, err := sc.w.Write(b)
-	return err
-}
-
-// Recv reads from an http2Stream connection.
-func (sc *http2Stream) Recv() ([]byte, error) {
-	// TODO(@tpaschalis) Can't we just read directly into the buffer?
-	bufReader := bufio.NewReader(sc.r)
-	buf := make([]byte, 1024)
-
-	var err error
-	for {
-		n, err := bufReader.Read(buf)
-		if n > 0 {
-			return buf, nil
-		}
-
-		if err != nil {
-			if err == io.EOF {
-				sc.r.Close()
-			}
-			break
-		}
-	}
-
-	return nil, err
 }
 
 // WriteToAddress implements NodeAwareTransport.

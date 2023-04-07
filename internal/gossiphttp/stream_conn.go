@@ -13,12 +13,13 @@ import (
 )
 
 // streamClient is implemented by http2Stream.
-// This code is copied from the internal/memberlistgrpc package.
 type streamClient interface {
 	Send([]byte) error
 	Recv() ([]byte, error)
 }
 
+// packetsClientConn implements a bidirectional communication channel with a
+// remote peer exchanging gossiphttp messages.
 type packetsClientConn struct {
 	cli     streamClient
 	onClose func()
@@ -152,10 +153,6 @@ func (c *packetsClientConn) Close() error {
 			c.onClose()
 		}
 
-		// TODO(@tpaschalis) Is this the correct equivalent for gossiphttp?
-		// if clientStream, ok := c.cli.(Transport_StreamPacketsClient); ok {
-		// 	return clientStream.CloseSend()
-		// }
 		return c.cli.(*http2Stream).r.Close()
 	}
 }

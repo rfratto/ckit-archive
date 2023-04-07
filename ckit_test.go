@@ -2,25 +2,18 @@ package ckit_test
 
 import (
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
-	"testing"
-	"time"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/rfratto/ckit"
 	"github.com/rfratto/ckit/peer"
 	"github.com/rfratto/ckit/shard"
-	"github.com/stretchr/testify/require"
-	"golang.org/x/net/http2"
-	"golang.org/x/net/http2/h2c"
 	"google.golang.org/grpc"
 )
 
@@ -114,7 +107,7 @@ func Example() {
 	// Owner of some-key: first-node
 }
 
-func ExampleOverHTTP() {
+func Example_gossiphttp() {
 	// Our cluster works over HTTP, so we must first create an HTTP server.
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -208,159 +201,4 @@ func ExampleOverHTTP() {
 
 	// Output:
 	// Owner of some-key: first-node
-}
-
-func TestHTTPNodes_UseHTTPTest(t *testing.T) {
-	// Define N nodes, each with its own HTTP server and ckit config
-	numNodes := 3
-	// var servers []*http.Server
-	var configs []ckit.Config
-	var nodes []*ckit.Node
-	var listeners []net.Listener
-	var muxs []*http.ServeMux
-
-	for i := 0; i < numNodes; i++ {
-		lis, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			panic(err)
-		}
-		listeners = append(listeners, lis)
-
-		muxs = append(muxs, http.NewServeMux())
-
-		configs = append(configs, ckit.Config{
-			AdvertiseAddr: lis.Addr().String(),
-			Sharder:       shard.Rendezvous(),
-			Log:           log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)),
-		})
-		configs[i].Name = fmt.Sprintf("node-%d", i)
-
-		n, err := ckit.NewHTTPNode(muxs[i], configs[i])
-		if err != nil {
-			panic(err)
-		}
-
-		nodes = append(nodes, n)
-		nodes[i].Observe(ckit.FuncObserver(func(peers []peer.Peer) (reregister bool) { return true }))
-	}
-
-	// Start all HTTP servers
-	go func() {
-		for i := 0; i < numNodes; i++ {
-			srv := httptest.NewUnstartedServer(h2c.NewHandler(muxs[i], &http2.Server{}))
-			srv.Listener.Close()
-			srv.Listener = listeners[i]
-			srv.Start()
-		}
-	}()
-
-	// Start first node to initialize the cluster; change its state to Participant
-	err := nodes[0].Start(nil)
-	if err != nil {
-		panic(err)
-	}
-	defer nodes[0].Stop()
-
-	err = nodes[0].ChangeState(context.Background(), peer.StateParticipant)
-	if err != nil {
-		panic(err)
-	}
-
-	// Start up the rest of the nodes in sequence
-	for i := 1; i < numNodes; i++ {
-		err := nodes[i].Start([]string{listeners[0].Addr().String()})
-		require.NoError(t, err)
-		err = nodes[i].ChangeState(context.Background(), peer.StateParticipant)
-		require.NoError(t, err)
-	}
-
-	// Inspect the cluster state.
-	for i := 0; i < numNodes; i++ {
-		require.Len(t, nodes[i].Peers(), numNodes)
-	}
-}
-
-func TestHTTPNodes_UseProper(t *testing.T) {
-	// Define N nodes, each with its own HTTP server and ckit config
-	numNodes := 3
-
-	var servers []*http.Server
-	var configs []ckit.Config
-	var nodes []*ckit.Node
-	var listeners []net.Listener
-	var muxs []*http.ServeMux
-
-	for i := 0; i < numNodes; i++ {
-		lis, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			panic(err)
-		}
-		listeners = append(listeners, lis)
-		muxs = append(muxs, http.NewServeMux())
-
-		configs = append(configs, ckit.Config{
-			AdvertiseAddr: lis.Addr().String(),
-			Sharder:       shard.Rendezvous(),
-			Log:           log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)),
-		})
-		configs[i].Name = fmt.Sprintf("node-%d", i)
-
-		n, err := ckit.NewHTTPNode(muxs[i], configs[i])
-		if err != nil {
-			panic(err)
-		}
-
-		nodes = append(nodes, n)
-		nodes[i].Observe(ckit.FuncObserver(func(peers []peer.Peer) (reregister bool) { return true }))
-	}
-
-	for i := 0; i < numNodes; i++ {
-		servers = append(servers, &http.Server{
-			Addr:    listeners[i].Addr().String(),
-			Handler: h2c.NewHandler(muxs[i], &http2.Server{}),
-			TLSConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		})
-	}
-
-	// Start all HTTP servers
-	for i := 0; i < numNodes; i++ {
-		go func(i int) {
-			defer servers[i].Close()
-			defer listeners[i].Close()
-			servers[i].Serve(listeners[i])
-		}(i)
-	}
-	time.Sleep(1 * time.Second)
-
-	// Start first node to initialize the cluster; change its state to Participant
-	err := nodes[0].Start(nil)
-	if err != nil {
-		panic(err)
-	}
-	defer nodes[0].Stop()
-
-	err = nodes[0].ChangeState(context.Background(), peer.StateParticipant)
-	if err != nil {
-		panic(err)
-	}
-
-	// Start up the rest of the nodes in sequence
-	for i := 1; i < numNodes; i++ {
-		err := nodes[i].Start([]string{listeners[0].Addr().String()})
-		require.NoError(t, err)
-		err = nodes[i].ChangeState(context.Background(), peer.StateParticipant)
-		require.NoError(t, err)
-	}
-	// time.Sleep(500 * time.Second)
-
-	fmt.Println(nodes[0].Peers())
-	fmt.Println(nodes[1].Peers())
-	fmt.Println(nodes[2].Peers())
-
-	// Inspect the cluster state.
-	for i := 0; i < numNodes; i++ {
-		require.Len(t, nodes[i].Peers(), numNodes)
-	}
 }
