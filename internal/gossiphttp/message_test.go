@@ -18,6 +18,7 @@ func Fuzz_message(f *testing.F) {
 	}
 
 	f.Fuzz(func(t *testing.T, data []byte) {
+		// Ignore slices longer than the max message length.
 		if len(data) > math.MaxUint16 {
 			t.Skip()
 		}
