@@ -359,6 +359,7 @@ func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
 	readCnd := sync.NewCond(&readMut)
 
 	t.metrics.openStreams.Inc()
+	defer t.metrics.openStreams.Dec()
 
 	packetsClient := &http2Stream{
 		t: t,
