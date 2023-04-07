@@ -127,7 +127,6 @@ var (
 // http2Stream implements the streamClient interface and allows for sending and
 // receiving messages in a bidirectional streaming connection.
 type http2Stream struct {
-	t *Transport
 	r io.ReadCloser
 	w io.Writer
 }
@@ -225,7 +224,7 @@ func (t *Transport) run(ctx context.Context) {
 		defer wg.Done()
 
 		for {
-			v, err := t.inPacketQueue.Dequeue(context.Background())
+			v, err := t.inPacketQueue.Dequeue(ctx)
 			if err != nil {
 				return
 			}
@@ -234,7 +233,10 @@ func (t *Transport) run(ctx context.Context) {
 			t.metrics.packetRxTotal.Inc()
 			t.metrics.packetRxBytesTotal.Add(float64(len(pkt.Buf)))
 
-			t.inPacketCh <- pkt
+			select {
+			case <-ctx.Done():
+			case t.inPacketCh <- pkt:
+			}
 		}
 	}()
 
@@ -243,7 +245,7 @@ func (t *Transport) run(ctx context.Context) {
 		defer wg.Done()
 
 		for {
-			v, err := t.outPacketQueue.Dequeue(context.Background())
+			v, err := t.outPacketQueue.Dequeue(ctx)
 			if err != nil {
 				return
 			}
@@ -269,7 +271,7 @@ func (t *Transport) Handler() (route string, handler http.Handler) {
 // handleMessage is used for single-packet communication.
 func (t *Transport) handleMessage(w http.ResponseWriter, r *http.Request) {
 	if r.ProtoMajor != 2 {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusHTTPVersionNotSupported)
 		return
 	}
 	if r.Header.Get(contentTypeHeader) != ckitContentType {
@@ -290,7 +292,8 @@ func (t *Transport) handleMessage(w http.ResponseWriter, r *http.Request) {
 			break
 		} else if err != nil {
 			level.Warn(t.log).Log("msg", "error reading packet from peer", "err", err)
-			break
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
 
 		t.metrics.packetRxTotal.Inc()
@@ -336,7 +339,7 @@ func parseRemoteAddr(addr string) net.Addr {
 // handleStream is used for streaming bidirectional communication.
 func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
 	if r.ProtoMajor != 2 {
-		w.WriteHeader(http.StatusInternalServerError)
+		w.WriteHeader(http.StatusHTTPVersionNotSupported)
 		return
 	}
 	flusher, ok := w.(http.Flusher)
@@ -362,13 +365,12 @@ func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
 	defer t.metrics.openStreams.Dec()
 
 	packetsClient := &http2Stream{
-		t: t,
 		r: r.Body,
 		w: &flushWriter{w: w, f: flusher},
 	}
 
 	conn := &packetsClientConn{
-		cli: packetsClient,
+		cli:     packetsClient,
 		onClose: func() { close(waitClosed) },
 		closed:  make(chan struct{}),
 		metrics: t.metrics,
@@ -473,7 +475,6 @@ func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 	}
 
 	packetsClient := &http2Stream{
-		t: t,
 		r: resp.Body,
 		w: pw,
 	}
