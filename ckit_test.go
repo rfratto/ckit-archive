@@ -126,24 +126,23 @@ func Example_gossiphttp() {
 
 	// Create a config to use for joining the cluster. The config must at least
 	// have a unique name for the node in the cluster, and the address that other
-	// nodes can connect to using gRPC.
+	// nodes can connect to using HTTP/2.
 	cfg := ckit.Config{
 		// Name of the discoverer. Must be unique.
 		Name: "first-node",
 
 		// AdvertiseAddr will be the address shared with other nodes.
-		// AdvertiseAddr: lis.Addr().String(),
 		AdvertiseAddr: lis.Addr().String(),
 
-		// Cluster changes will be immediately synchronized with a sharder (when
-		// provided).
+		// Cluster changes will be immediately synchronized with a sharder
+		// (when provided).
 		Sharder: ring,
 
 		Log: log.NewLogfmtLogger(log.NewSyncWriter(os.Stderr)),
 	}
 
-	// We can create a node from our config with a gRPC server to use. Nodes do not
-	// join the cluster until Start is called.
+	// We can create a node from our config with an HTTP server to use. Nodes
+	// do not join the cluster until Start is called.
 	node, err := ckit.NewHTTPNode(mux, cfg)
 	if err != nil {
 		panic(err)
@@ -164,7 +163,7 @@ func Example_gossiphttp() {
 		return true
 	}))
 
-	// Run our gRPC server. This can only happen after the discoverer is created.
+	// Run our HTTP server.
 	go func() {
 		err := srv.Serve(lis)
 		if err != nil && err != http.ErrServerClosed {
