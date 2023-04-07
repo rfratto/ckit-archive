@@ -440,10 +440,9 @@ func (t *Transport) PacketCh() <-chan *memberlist.Packet {
 // peer address.
 func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, error) {
 	ctx := context.Background()
+	var cancel context.CancelFunc
 	if timeout > 0 {
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, t.opts.PacketTimeout)
-		defer cancel()
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 	}
 
 	var readMut sync.Mutex
@@ -467,9 +466,11 @@ func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 		Body:       pr,
 	}
 	req.Header.Set(contentTypeHeader, ckitContentType)
+	req = req.WithContext(ctx)
 
 	resp, err := t.opts.Client.Do(req)
 	if err != nil {
+		cancel()
 		return nil, err
 	}
 
@@ -484,6 +485,7 @@ func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 
 		onClose: func() {
 			t.metrics.openStreams.Dec()
+			cancel()
 		},
 		closed:  make(chan struct{}),
 		metrics: t.metrics,
@@ -520,17 +522,32 @@ func (t *Transport) writeToSync(b []byte, addr string) {
 	}
 
 	bb := bytes.NewBuffer(nil)
-	writeMessage(bb, b)
-	req, err := http.NewRequest("POST", "http://"+addr+messageEndpoint, bb)
+	err := writeMessage(bb, b)
 	if err != nil {
-		level.Debug(t.log).Log("msg", "failed to create outgoing request", "err", err)
+		level.Debug(t.log).Log("msg", "failed to encode message", "err", err)
 		t.metrics.packetTxFailedTotal.Inc()
 		return
 	}
 
+	req := &http.Request{
+		Method: http.MethodPost,
+		URL: &url.URL{
+			Scheme: "http",
+			Host:   addr,
+			Path:   messageEndpoint,
+		},
+		Header:     http.Header{},
+		Proto:      "HTTP/2",
+		ProtoMajor: 2,
+		ProtoMinor: 0,
+		Body:       io.NopCloser(bb),
+	}
+	req.Header.Set(contentTypeHeader, ckitContentType)
+	req = req.WithContext(ctx)
+
 	req.Header.Set("Content-Type", ckitContentType)
-	_, err = t.opts.Client.Do(req)
-	if err != nil {
+	resp, err := t.opts.Client.Do(req)
+	if err != nil || resp.StatusCode != http.StatusOK {
 		level.Debug(t.log).Log("msg", "failed to send message", "err", err)
 		t.metrics.packetTxFailedTotal.Inc()
 	}
