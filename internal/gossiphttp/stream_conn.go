@@ -28,12 +28,12 @@ type packetsClientConn struct {
 
 	localAddr, remoteAddr net.Addr
 
-	readCnd           *sync.Cond         // Signals waiting readers
-	spawnReader       sync.Once          // Used to lazily launch a cli reader
-	readMessages      chan readResult    // Messages read from the cli reader
-	readTimeout       time.Time          // Read deadline
-	readTimeoutCancel context.CancelFunc // Cancel read deadline and wake up goroutines
-	readBuffer        bytes.Buffer       // Data buffer ready for immediate reading
+	readCnd           *sync.Cond         // Used to wake sleeping readers.
+	spawnReader       sync.Once          // Used to lazily launch a cli reader.
+	readMessages      chan readResult    // Messages read from the cli reader.
+	readTimeout       time.Time          // Read deadline.
+	readTimeoutCancel context.CancelFunc // Cancels read deadline and wakes up goroutines.
+	readBuffer        bytes.Buffer       // Data buffer ready for immediate reading.
 
 	writeMut sync.Mutex
 }
