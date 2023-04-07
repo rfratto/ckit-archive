@@ -272,6 +272,10 @@ func (t *Transport) handleMessage(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
+	if r.Header.Get(contentTypeHeader) != ckitContentType {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 
 	var (
 		recvTime   = time.Now()
