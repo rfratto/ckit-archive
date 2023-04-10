@@ -43,6 +43,7 @@ import (
 	"net/http"
 	"net/url"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-kit/log"
@@ -118,6 +119,7 @@ type Transport struct {
 	closedMut sync.RWMutex
 	exited    chan struct{}
 	cancel    context.CancelFunc
+	hasExited atomic.Bool
 
 	// Generated after calling FinalAdvertiseAddr
 	localAddr net.Addr
@@ -274,6 +276,10 @@ func (t *Transport) Handler() (route string, handler http.Handler) {
 
 // handleMessage is used for single-packet communication.
 func (t *Transport) handleMessage(w http.ResponseWriter, r *http.Request) {
+	if t.hasExited.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	if r.ProtoMajor != 2 {
 		w.WriteHeader(http.StatusHTTPVersionNotSupported)
 		return
@@ -342,6 +348,10 @@ func parseRemoteAddr(addr string) net.Addr {
 
 // handleStream is used for streaming bidirectional communication.
 func (t *Transport) handleStream(w http.ResponseWriter, r *http.Request) {
+	if t.hasExited.Load() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	if r.ProtoMajor != 2 {
 		w.WriteHeader(http.StatusHTTPVersionNotSupported)
 		return
@@ -517,6 +527,7 @@ func (t *Transport) Shutdown() error {
 	t.closedMut.Lock()
 	defer t.closedMut.Unlock()
 	t.cancel()
+	t.hasExited.Store(true)
 	<-t.exited
 	return nil
 }
