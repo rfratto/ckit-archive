@@ -81,16 +81,20 @@ type Options struct {
 	// Optional logger to use.
 	Log log.Logger
 
-	// Client to use for communicating to peers. Required. The Transport used by
-	// the client must be able to handle HTTP2 requests for any peer.
+	// Client to use for communicating to peers. Required. The Transport used
+	// by the client must be able to handle HTTP/2 requests for any peer.
 	//
 	// Note that TLS is not required for communication between peers. The
-	// Client.Transport should be able to fall back to h2c for HTTP2 traffic when
-	// connections over HTTPS are not used.
+	// Client.Transport should be able to fall back to h2c for HTTP/2 traffic
+	// when connections over HTTPS are not used.
 	Client *http.Client
 
 	// Timeout to use when sending a packet.
 	PacketTimeout time.Duration
+
+	// UseHTTPS defines whether TLS should be used for communication between
+	// peers.
+	UseHTTPS bool
 }
 
 // Transport is an HTTP/2 implementation of memberlist.Transport. Call
@@ -445,6 +449,11 @@ func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 	}
 
+	scheme := "http"
+	if t.opts.UseHTTPS {
+		scheme = "https"
+	}
+
 	var readMut sync.Mutex
 	readCnd := sync.NewCond(&readMut)
 
@@ -455,7 +464,7 @@ func (t *Transport) DialTimeout(addr string, timeout time.Duration) (net.Conn, e
 	req := &http.Request{
 		Method: http.MethodPost,
 		URL: &url.URL{
-			Scheme: "http",
+			Scheme: scheme,
 			Host:   addr,
 			Path:   streamEndpoint,
 		},
@@ -520,6 +529,11 @@ func (t *Transport) writeToSync(b []byte, addr string) {
 		defer cancel()
 	}
 
+	scheme := "http"
+	if t.opts.UseHTTPS {
+		scheme = "https"
+	}
+
 	bb := bytes.NewBuffer(nil)
 	err := writeMessage(bb, b)
 	if err != nil {
@@ -531,7 +545,7 @@ func (t *Transport) writeToSync(b []byte, addr string) {
 	req := &http.Request{
 		Method: http.MethodPost,
 		URL: &url.URL{
-			Scheme: "http",
+			Scheme: scheme,
 			Host:   addr,
 			Path:   messageEndpoint,
 		},

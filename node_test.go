@@ -360,7 +360,18 @@ func TestHTTPNodes(t *testing.T) {
 	var configs []Config
 	var nodes []*Node
 	var listeners []net.Listener
-	var muxs []*http.ServeMux
+
+	cli := &http.Client{
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, _ *tls.Config) (net.Conn, error) {
+				return net.Dial(network, addr)
+			},
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
 
 	for i := 0; i < numNodes; i++ {
 		lis, err := net.Listen("tcp", "127.0.0.1:0")
@@ -368,7 +379,6 @@ func TestHTTPNodes(t *testing.T) {
 			panic(err)
 		}
 		listeners = append(listeners, lis)
-		muxs = append(muxs, http.NewServeMux())
 
 		configs = append(configs, Config{
 			AdvertiseAddr: lis.Addr().String(),
@@ -377,7 +387,7 @@ func TestHTTPNodes(t *testing.T) {
 		})
 		configs[i].Name = fmt.Sprintf("node-%d", i)
 
-		n, err := NewHTTPNode(muxs[i], configs[i])
+		n, err := NewHTTPNode(cli, configs[i])
 		if err != nil {
 			panic(err)
 		}
@@ -387,9 +397,12 @@ func TestHTTPNodes(t *testing.T) {
 	}
 
 	for i := 0; i < numNodes; i++ {
+		mux := http.NewServeMux()
+		baseRoute, handler := nodes[i].Handler()
+		mux.Handle(baseRoute, handler)
 		servers = append(servers, &http.Server{
 			Addr:    listeners[i].Addr().String(),
-			Handler: h2c.NewHandler(muxs[i], &http2.Server{}),
+			Handler: h2c.NewHandler(mux, &http2.Server{}),
 			TLSConfig: &tls.Config{
 				InsecureSkipVerify: true,
 			},

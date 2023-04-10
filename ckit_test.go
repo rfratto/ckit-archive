@@ -2,6 +2,7 @@ package ckit_test
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"github.com/rfratto/ckit"
 	"github.com/rfratto/ckit/peer"
 	"github.com/rfratto/ckit/shard"
+	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 )
 
@@ -114,10 +116,16 @@ func Example_gossiphttp() {
 		panic(err)
 	}
 
-	mux := http.NewServeMux()
-	srv := &http.Server{
-		Addr:    lis.Addr().String(),
-		Handler: mux,
+	cli := &http.Client{
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, _ *tls.Config) (net.Conn, error) {
+				return net.Dial(network, addr)
+			},
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
 	}
 
 	// We want to be able to perform consistent hashing against the state of the
@@ -143,7 +151,7 @@ func Example_gossiphttp() {
 
 	// We can create a node from our config with an HTTP server to use. Nodes
 	// do not join the cluster until Start is called.
-	node, err := ckit.NewHTTPNode(mux, cfg)
+	node, err := ckit.NewHTTPNode(cli, cfg)
 	if err != nil {
 		panic(err)
 	}
@@ -162,6 +170,14 @@ func Example_gossiphttp() {
 		level.Info(cfg.Log).Log("msg", "peers changed", "new_peers", strings.Join(names, ","))
 		return true
 	}))
+
+	mux := http.NewServeMux()
+	baseRoute, handler := node.Handler()
+	mux.Handle(baseRoute, handler)
+	srv := &http.Server{
+		Addr:    lis.Addr().String(),
+		Handler: mux,
+	}
 
 	// Run our HTTP server.
 	go func() {

@@ -3,7 +3,6 @@ package ckit
 import (
 	"bytes"
 	"context"
-	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
@@ -27,7 +26,6 @@ import (
 	"github.com/rfratto/ckit/internal/queue"
 	"github.com/rfratto/ckit/peer"
 	"github.com/rfratto/ckit/shard"
-	"golang.org/x/net/http2"
 	"google.golang.org/grpc"
 )
 
@@ -103,6 +101,8 @@ type Node struct {
 	conflictQueue        *queue.Queue
 	notifyObserversQueue *queue.Queue
 	m                    *metrics
+	baseRoute            string
+	handler              http.Handler
 
 	// The clock for the node. Nodes have their own clock for the sake of
 	// testing; using the global clock could cause clock synchronization issues
@@ -213,7 +213,7 @@ func NewNode(srv *grpc.Server, cfg Config) (*Node, error) {
 
 // NewHTTPNode creates an unstarted Node to participulate in a cluster. An error
 // will be returned if the provided config is invalid.
-func NewHTTPNode(mux *http.ServeMux, cfg Config) (*Node, error) {
+func NewHTTPNode(cli *http.Client, cfg Config) (*Node, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
 	}
@@ -233,18 +233,6 @@ func NewHTTPNode(mux *http.ServeMux, cfg Config) (*Node, error) {
 		return nil, fmt.Errorf("failed to parse advertise port %q: %w", advertisePortString, err)
 	}
 
-	cli := &http.Client{
-		Transport: &http2.Transport{
-			AllowHTTP: true,
-			DialTLS: func(network, addr string, _ *tls.Config) (net.Conn, error) {
-				return net.Dial(network, addr)
-			},
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: true,
-			},
-		},
-	}
-
 	httpTransport, transportMetrics, err := gossiphttp.NewTransport(gossiphttp.Options{
 		Log:           cfg.Log,
 		Client:        cli,
@@ -255,7 +243,6 @@ func NewHTTPNode(mux *http.ServeMux, cfg Config) (*Node, error) {
 	}
 
 	baseRoute, handler := httpTransport.Handler()
-	mux.Handle(baseRoute, handler)
 
 	mlc := memberlist.DefaultLANConfig()
 	mlc.Name = cfg.Name
@@ -274,6 +261,9 @@ func NewHTTPNode(mux *http.ServeMux, cfg Config) (*Node, error) {
 
 		peerStates: make(map[string]messages.State),
 		peers:      make(map[string]peer.Peer),
+
+		baseRoute: baseRoute,
+		handler:   handler,
 	}
 
 	nd := &nodeDelegate{Node: n}
@@ -308,6 +298,13 @@ func NewHTTPNode(mux *http.ServeMux, cfg Config) (*Node, error) {
 // Metrics returns a prometheus.Collector that can be used to collect metrics
 // about the Node.
 func (n *Node) Metrics() prometheus.Collector { return n.m }
+
+// Handler returns the base route and http.Handler used by the Node for
+// communicating over HTTP/2.
+//
+// The base route and handler must be configured properly by registering them
+// with an HTTP server before starting the Node.
+func (n *Node) Handler() (string, http.Handler) { return n.baseRoute, n.handler }
 
 // Start runs the Node for clustering with a list of peers to connect to. peers
 // can be an empty list if there is are no peers to connect to; other peers can

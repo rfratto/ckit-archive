@@ -47,6 +47,9 @@ func (c *packetsClientConn) Read(b []byte) (n int, err error) {
 	defer func() {
 		c.metrics.streamRxTotal.Inc()
 		c.metrics.streamRxBytesTotal.Add(float64(n))
+		if err != nil {
+			c.metrics.streamRxFailedTotal.Inc()
+		}
 	}()
 
 	// Lazily spawn a background goroutine to reaed from our stream client.
