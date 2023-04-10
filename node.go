@@ -8,7 +8,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"sort"
 	"sync"
 	"time"
@@ -249,7 +248,11 @@ func NewHTTPNode(cli *http.Client, cfg Config) (*Node, error) {
 	mlc.Transport = httpTransport
 	mlc.AdvertiseAddr = advertiseIP.String()
 	mlc.AdvertisePort = advertisePort
-	mlc.LogOutput = os.Stderr
+	mlc.LogOutput = io.Discard
+
+	if cfg.Log != nil {
+		mlc.LogOutput = log.NewStdlibAdapter(level.Debug(log.With(cfg.Log, "component", "memberlist")))
+	}
 
 	n := &Node{
 		log: cfg.Log,
