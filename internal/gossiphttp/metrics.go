@@ -17,6 +17,7 @@ type metrics struct {
 	openStreams         prometheus.Gauge
 	streamRxTotal       prometheus.Counter
 	streamRxBytesTotal  prometheus.Counter
+	streamRxFailedTotal prometheus.Counter
 	streamTxTotal       prometheus.Counter
 	streamTxBytesTotal  prometheus.Counter
 	streamTxFailedTotal prometheus.Counter
@@ -57,6 +58,10 @@ func newMetrics() *metrics {
 	m.streamRxBytesTotal = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "cluster_transport_stream_rx_bytes_total",
 		Help: "Total number of HTTP/2 gossip transport stream bytes read",
+	})
+	m.streamRxFailedTotal = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "cluster_transport_stream_rx_packets_failed_total",
+		Help: "Total number of HTTP/2 gossip transport stream packets failed to read",
 	})
 	m.streamTxTotal = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "cluster_transport_stream_tx_packets_total",
