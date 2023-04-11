@@ -1,0 +1,37 @@
+version: "3"
+services:
+  agent:
+    image: grafana/agent:latest
+    volumes:
+      - ./config/agent:/etc/agent-config
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      AGENT_MODE: "flow"
+      COMPOSE_PROJECT_NAME: "${COMPOSE_PROJECT_NAME}"
+    ports:
+      - "12345:12345"
+    entrypoint:
+      - /bin/grafana-agent
+      - run
+      - /etc/agent-config/config.river
+      - --server.http.listen-addr=0.0.0.0:12345
+
+  seed:
+    build:
+      context: ../..
+      dockerfile: example/basic/Dockerfile
+    ports:
+      - 8080
+    depends_on: [agent]
+
+  workers:
+    deploy:
+      replicas: 0
+    build:
+      context: ../..
+      dockerfile: example/basic/Dockerfile
+    ports:
+      - 8080
+    command:
+      - --join-addrs=seed:8080
+    depends_on: [agent]

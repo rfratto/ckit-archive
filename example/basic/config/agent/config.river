@@ -1,0 +1,29 @@
+discovery.docker "example" {
+	host = "unix:///var/run/docker.sock"
+	refresh_interval = "5s"
+
+	filter {
+		name = "label"
+		values = [
+			"com.docker.compose.project=" + env("COMPOSE_PROJECT_NAME"),
+		]
+	}
+}
+
+discovery.relabel "containers" {
+	targets = discovery.docker.example.targets
+
+	rule {
+		source_labels = ["__meta_docker_container_name"]
+		target_label  = "instance"
+		regex         = "/(.*)"
+	}
+}
+
+prometheus.scrape "default" {
+	targets    = discovery.relabel.containers.output 
+	forward_to = []
+
+	scrape_interval = "15s"
+	scrape_timeout  = "10s"
+}
