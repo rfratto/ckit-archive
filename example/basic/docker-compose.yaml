@@ -5,6 +5,7 @@ services:
     volumes:
       - ./config/grafana:/etc/grafana-config
       - ./config/grafana/datasources:/etc/grafana/provisioning/datasources
+      - /var/lib/grafana
     ports:
       - 3000:3000
     entrypoint:
@@ -16,6 +17,7 @@ services:
     image: prom/prometheus:v2.43.0
     volumes:
       - ./config/prometheus:/etc/prometheus-config
+      - /prometheus
     entrypoint:
       - /bin/prometheus
       - --config.file=/etc/prometheus-config/prometheus.yml
