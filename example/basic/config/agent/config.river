@@ -1,9 +1,10 @@
 discovery.docker "example" {
 	host = "unix:///var/run/docker.sock"
+
 	refresh_interval = "5s"
 
 	filter {
-		name = "label"
+		name   = "label"
 		values = [
 			"com.docker.compose.project=" + env("COMPOSE_PROJECT_NAME"),
 		]
@@ -21,9 +22,15 @@ discovery.relabel "containers" {
 }
 
 prometheus.scrape "default" {
-	targets    = discovery.relabel.containers.output 
-	forward_to = []
+	targets    = discovery.relabel.containers.output
+	forward_to = [prometheus.remote_write.default.receiver]
 
 	scrape_interval = "15s"
 	scrape_timeout  = "10s"
+}
+
+prometheus.remote_write "default" {
+	endpoint {
+		url = "http://prometheus:9090/api/v1/write"
+	}
 }

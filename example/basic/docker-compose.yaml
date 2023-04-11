@@ -1,5 +1,27 @@
 version: "3"
 services:
+  grafana:
+    image: grafana/grafana:9.4.7
+    volumes:
+      - ./config/grafana:/etc/grafana-config
+      - ./config/grafana/datasources:/etc/grafana/provisioning/datasources
+    ports:
+      - 3000:3000
+    entrypoint:
+      - /usr/share/grafana/bin/grafana-server
+      - --homepath=/usr/share/grafana
+      - --config=/etc/grafana-config/config.ini
+
+  prometheus:
+    image: prom/prometheus:v2.43.0
+    volumes:
+      - ./config/prometheus:/etc/prometheus-config
+    entrypoint:
+      - /bin/prometheus
+      - --config.file=/etc/prometheus-config/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --web.enable-remote-write-receiver
+
   agent:
     image: grafana/agent:latest
     volumes:
@@ -15,6 +37,7 @@ services:
       - run
       - /etc/agent-config/config.river
       - --server.http.listen-addr=0.0.0.0:12345
+    depends_on: [prometheus]
 
   seed:
     build:
