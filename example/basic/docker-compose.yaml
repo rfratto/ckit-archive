@@ -1,10 +1,12 @@
 version: "3"
 services:
   grafana:
-    image: grafana/grafana:9.4.7
+    image: grafana/grafana:9.2.3 # 9.4.7
     volumes:
       - ./config/grafana:/etc/grafana-config
       - ./config/grafana/datasources:/etc/grafana/provisioning/datasources
+      - ./config/grafana/dashboards-provisioning:/etc/grafana/provisioning/dashboards
+      - ./config/grafana/dashboards:/var/lib/grafana/provisioned-dashboards
       - grafana_data:/var/lib/grafana
     ports:
       - 3000:3000
@@ -51,7 +53,7 @@ services:
 
   workers:
     deploy:
-      replicas: 0
+      replicas: 9
     build:
       context: ../..
       dockerfile: example/basic/Dockerfile
