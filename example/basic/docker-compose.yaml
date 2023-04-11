@@ -5,7 +5,7 @@ services:
     volumes:
       - ./config/grafana:/etc/grafana-config
       - ./config/grafana/datasources:/etc/grafana/provisioning/datasources
-      - /var/lib/grafana
+      - grafana_data:/var/lib/grafana
     ports:
       - 3000:3000
     entrypoint:
@@ -17,7 +17,7 @@ services:
     image: prom/prometheus:v2.43.0
     volumes:
       - ./config/prometheus:/etc/prometheus-config
-      - /prometheus
+      - prometheus_data:/prometheus
     entrypoint:
       - /bin/prometheus
       - --config.file=/etc/prometheus-config/prometheus.yml
@@ -60,3 +60,7 @@ services:
     command:
       - --join-addrs=seed:8080
     depends_on: [agent]
+
+volumes:
+  prometheus_data:
+  grafana_data:
