@@ -21,7 +21,6 @@ import (
 	"go.uber.org/atomic"
 	"golang.org/x/net/http2"
 	"golang.org/x/net/http2/h2c"
-	"google.golang.org/grpc"
 )
 
 func newTestNode(t *testing.T, l log.Logger, name string) (n *Node, addr string) {
@@ -30,8 +29,6 @@ func newTestNode(t *testing.T, l log.Logger, name string) (n *Node, addr string)
 	if l == nil {
 		l = log.NewNopLogger()
 	}
-
-	grpcServer := grpc.NewServer()
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
@@ -42,16 +39,39 @@ func newTestNode(t *testing.T, l log.Logger, name string) (n *Node, addr string)
 		Log:           log.With(l, "node", name),
 	}
 
-	node, err := NewNode(grpcServer, cfg)
+	cli := &http.Client{
+		Transport: &http2.Transport{
+			AllowHTTP: true,
+			DialTLS: func(network, addr string, _ *tls.Config) (net.Conn, error) {
+				return net.Dial(network, addr)
+			},
+			TLSClientConfig: &tls.Config{
+				InsecureSkipVerify: true,
+			},
+		},
+	}
+
+	node, err := NewNode(cli, cfg)
 	require.NoError(t, err)
+	mux := http.NewServeMux()
+	baseRoute, handler := node.Handler()
+	mux.Handle(baseRoute, handler)
+
+	httpServer := &http.Server{
+		Addr:    lis.Addr().String(),
+		Handler: h2c.NewHandler(mux, &http2.Server{}),
+		TLSConfig: &tls.Config{
+			InsecureSkipVerify: true,
+		},
+	}
 
 	go func() {
-		err := grpcServer.Serve(lis)
-		if err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+		err := httpServer.Serve(lis)
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			require.NoError(t, err)
 		}
 	}()
-	t.Cleanup(grpcServer.GracefulStop)
+	t.Cleanup(func() { require.NoError(t, httpServer.Shutdown(context.Background())) })
 
 	node.Observe(FuncObserver(func(peers []peer.Peer) (reregister bool) {
 		names := make([]string, len(peers))
@@ -387,7 +407,7 @@ func TestHTTPNodes(t *testing.T) {
 		})
 		configs[i].Name = fmt.Sprintf("node-%d", i)
 
-		n, err := NewHTTPNode(cli, configs[i])
+		n, err := NewNode(cli, configs[i])
 		if err != nil {
 			panic(err)
 		}
