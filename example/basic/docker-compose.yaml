@@ -1,7 +1,7 @@
 version: "3"
 services:
   grafana:
-    image: grafana/grafana:9.2.3 # 9.4.7
+    image: grafana/grafana:9.4.7
     volumes:
       - ./config/grafana:/etc/grafana-config
       - ./config/grafana/datasources:/etc/grafana/provisioning/datasources
