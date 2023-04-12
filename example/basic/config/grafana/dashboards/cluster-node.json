@@ -295,10 +295,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
@@ -592,7 +588,7 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "spanNulls": false,
+            "spanNulls": true,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -602,6 +598,7 @@
             }
           },
           "mappings": [],
+          "noValue": "1",
           "thresholds": {
             "mode": "absolute",
             "steps": [
@@ -822,8 +819,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -916,7 +912,7 @@
               "type": "linear"
             },
             "showPoints": "auto",
-            "spanNulls": false,
+            "spanNulls": true,
             "stacking": {
               "group": "A",
               "mode": "none"
@@ -926,12 +922,12 @@
             }
           },
           "mappings": [],
+          "noValue": "1",
           "thresholds": {
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1038,8 +1034,7 @@
             "mode": "absolute",
             "steps": [
               {
-                "color": "green",
-                "value": null
+                "color": "green"
               },
               {
                 "color": "red",
@@ -1115,8 +1110,8 @@
       {
         "current": {
           "selected": false,
-          "text": "basic-seed-1",
-          "value": "basic-seed-1"
+          "text": "basic-workers-99",
+          "value": "basic-workers-99"
         },
         "datasource": {
           "type": "prometheus",
@@ -1149,6 +1144,6 @@
   "timezone": "",
   "title": "Cluster node",
   "uid": "2JQGUuL4z",
-  "version": 13,
+  "version": 3,
   "weekStart": ""
 }

@@ -45,10 +45,6 @@
               {
                 "color": "green",
                 "value": null
-              },
-              {
-                "color": "red",
-                "value": 80
               }
             ]
           },
@@ -85,9 +81,11 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
+          "exemplar": false,
           "expr": "count(cluster_node_info)",
+          "instant": true,
           "legendFormat": "__auto",
-          "range": true,
+          "range": false,
           "refId": "A"
         }
       ],
@@ -151,7 +149,7 @@
                 "id": "links",
                 "value": [
                   {
-                    "targetBlank": true,
+                    "targetBlank": false,
                     "title": "Detail dashboard for node",
                     "url": "/d/2JQGUuL4z/cluster-node?var-instance=${__data.fields.instance}"
                   }
@@ -329,6 +327,6 @@
   "timezone": "",
   "title": "Cluster overview",
   "uid": "AeC-yXL4z",
-  "version": 7,
+  "version": 4,
   "weekStart": ""
 }
