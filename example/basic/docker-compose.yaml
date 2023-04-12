@@ -50,6 +50,7 @@ services:
     expose:
       - "8080"
     depends_on: [agent]
+    restart: always
 
   workers:
     deploy:
@@ -62,6 +63,7 @@ services:
     command:
       - --join-addrs=seed:8080
     depends_on: [agent]
+    restart: always
 
 volumes:
   prometheus_data:
