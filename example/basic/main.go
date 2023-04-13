@@ -82,7 +82,7 @@ func main() {
 		}
 	)
 
-	node, err := ckit.NewHTTPNode(client, nodeConfig)
+	node, err := ckit.NewNode(client, nodeConfig)
 	if err != nil {
 		level.Error(l).Log("msg", "failed to build node", "err", err)
 		os.Exit(1)
