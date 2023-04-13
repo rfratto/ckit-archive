@@ -118,6 +118,16 @@ type Node struct {
 
 // NewNode creates an unstarted Node to participulate in a cluster. An error
 // will be returned if the provided config is invalid.
+//
+// Before starting the Node, the caller has to wire up the Node's HTTP handlers
+// on the base route provided by the Handler method.
+// If Node is intended to be reachable over non-TLS HTTP/2 connections, then
+// the http.Server the routes are registered on must make use of the
+// golang.org/x/net/http2/h2c package to enable upgrading incoming plain HTTP
+// connections to HTTP/2.
+// Similarly, if the Node is intended to initiate non-TLS outgoing connections,
+// the provided cli should be configured properly (with AllowHTTP: true and a
+// custom DialTLS function).
 func NewNode(cli *http.Client, cfg Config) (*Node, error) {
 	if err := cfg.validate(); err != nil {
 		return nil, err
