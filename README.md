@@ -1,3 +1,5 @@
+> **NOTE**: This repository has moved to https://github.com/grafana/ckit
+
 # ckit
 
 ckit (clustering toolkit) is a lightweight package for creating clusters that
